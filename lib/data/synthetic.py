@@ -1,8 +1,10 @@
 import numpy as np
 import math
+import fbm
 
 
-def MB_sample(begin, end, number):
+def BM_sample(begin, end, number, seed=None):
+  np.random.seed(seed)
   timesteps = np.linspace(begin, end, number)
   s = (end-begin)/(number-1)
   sqrtS = math.sqrt(s)  
@@ -14,7 +16,17 @@ def MB_sample(begin, end, number):
   return sample, timesteps
 
 
-def GMB_sample(begin, end, InitCond, mu, sigma, number): 
+def FBM_sample(begin, end, number, H, seed=None):
+  np.random.seed(seed)
+  f = fbm.FBM(number - 1, H, length = end - begin)
+  sample = f.fbm()
+  timesteps = begin + f.times()
+
+  return sample, timesteps
+
+
+def GBM_sample(begin, end, InitCond, mu, sigma, number, seed=None): 
+  np.random.seed(seed)
   timesteps = np.linspace(begin, end, number)
   s = (end - begin)/(number - 1)
   sqrtS = math.sqrt(s)
@@ -30,7 +42,8 @@ def GMB_sample(begin, end, InitCond, mu, sigma, number):
   return sample, timesteps
 
 
-def Sinh_sample(begin, end, InitCond, number):
+def Sinh_sample(begin, end, InitCond, number, seed=None):
+  np.random.seed(seed)
   timesteps = np.linspace(begin, end, number)
   s = (end - begin)/(number - 1)
   sqrtS = math.sqrt(s)
@@ -46,7 +59,8 @@ def Sinh_sample(begin, end, InitCond, number):
   return sample, timesteps
 
 
-def OU_sample(begin, end, InitCond, alpha, gamma, beta, number):
+def OU_sample(begin, end, InitCond, alpha, gamma, beta, number, seed=None):
+  np.random.seed(seed)
   timesteps = np.linspace(begin, end, number)
   s = (end - begin)/(number - 1)
   sqrtS = math.sqrt(s)
@@ -62,4 +76,4 @@ def OU_sample(begin, end, InitCond, alpha, gamma, beta, number):
        StochIntApprox += (math.exp(alpha * timesteps[i-1]) - math.exp(alpha * timesteps[i-2]))*(MB[i] - MB[i-1]) / (alpha*s) # This approximation comes from the theory of elementary processes
     sample[i] = InitCond * math.exp(-alpha*TimeVar1) + gamma * (1 - math.exp(-alpha*TimeVar1)) + beta * math.exp(-alpha*TimeVar1) * StochIntApprox
 
-  return sample,timesteps
+  return sample, timesteps
