@@ -1,4 +1,4 @@
 *.pyc
 *.pth
 numerical_results/
-data/
+datasets/

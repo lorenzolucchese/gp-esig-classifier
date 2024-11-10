@@ -259,7 +259,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Meta parameters
     parser.add_argument('-base_dir', default='./numerical_results', type=str)
-    parser.add_argument('-data_dir', default='./data', type=str)
+    parser.add_argument('-data_dir', default='./datasets', type=str)
     parser.add_argument('-hyperparameters_config', default='./hyperparameters.yaml', type=str)
     parser.add_argument('-use_cuda', action='store_true')
     parser.add_argument('-device', default=1, type=int)
