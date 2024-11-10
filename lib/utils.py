@@ -17,47 +17,48 @@ def phi(x, C, a):
 
 def dilatation(x, C, a, M, d):
   '''
-  x: an array with dimension batch x signature
+  x: an array with dimension batch x samples x signature
   C, a : phi function parameters
   M : truncation level (called L in the paper)
   d : dimension of the time series we are computing the signature of (!! if time augmentation is deployed, then the dimension is increased by 1)
   '''
-  xNumpy = x.detach().numpy()
+  xNumpy = x.detach().numpy().astype(np.float64) 
 
-  coefficients = np.zeros((xNumpy.shape[0], (M+1)))
-  normalizz = np.zeros((xNumpy.shape[0], 1))
+  coefficients = np.zeros((xNumpy.shape[0], xNumpy.shape[1], (M+1)))
+  normalizz = np.zeros((xNumpy.shape[0], xNumpy.shape[1], 1))
 
-  for i in range(0,xNumpy.shape[0]):
-      normQuad = 1 + np.sum(xNumpy[i]**2) #signature norm squared
-      coefficients[i, 0] = 1-phi(normQuad,C,a)
-      for j in range(1, (M+1)):
-         coefficients[i, j] = np.sum(xNumpy[i, int(((d**j-1)/(d-1)-1)):int(((d**(j+1)-1)/(d-1)-1))]**2)
-      def polin(input):
-        xMonomials = np.zeros((M+1)) + 1
-        for k in range(1, (M+1)):
-            xMonomials[k] = input**(2*k)
-        return np.dot(xMonomials, coefficients[i])
-      normalizz[i] = optimize.brentq(polin, 0, 2)
-      if normalizz[i] > 1:
-        normalizz[i] = 1
+  for i in range(0, xNumpy.shape[0]):
+      for j in range(0, xNumpy.shape[1]):
+          normQuad = 1 + np.sum(xNumpy[i, j]**2) # signature norm squared
+          coefficients[i, j, 0] = 1 - phi(normQuad, C, a)
+          for k in range(1, (M+1)):
+            coefficients[i, j, k] = np.sum(xNumpy[i, j, int(((d**k-1)/(d-1)-1)):int(((d**(k+1)-1)/(d-1)-1))]**2)
+          def polin(input):
+            xMonomials = np.zeros((M+1)) + 1
+            for k in range(1, (M+1)):
+                xMonomials[k] = input**(2*k)
+            return np.dot(xMonomials, coefficients[i, j])
+          normalizz[i, j] = optimize.brentq(polin, 0, 2) if all(np.isfinite(coefficients[i, j])) else 0.
+          if normalizz[i, j] > 1:
+            normalizz[i, j] = 1
   return torch.from_numpy(normalizz)
 
 
 ''' grad computation of dilatation function (corollary B.14 in the paper) '''
 class Normalization(torch.autograd.Function):
     @staticmethod
-    def forward(self, input, C, M, d, exponents): #a=1, input should have dimension batch x length_sign, M is the truncation level, d the dimension of the timeseries, C normalization constant, exponents is useful to define correctly the dilatation
+    def forward(self, input, C, M, d, exponents, a): #a=1, input should have dimension batch x samples x length_sign, M is the truncation level, d the dimension of the timeseries, C normalization constant, exponents is useful to define correctly the dilatation
       '''
       input: an array batch x signature, it is x in the previous function
       C, M, d: as in the previous function
       exponents: a vector as long as the signature, it has d times 1, d^2 times 2,..., d^M times the value M
       '''
-      norm = dilatation(input, C, 1, M, d)
+      norm = dilatation(input, C, a, M, d)
       self.save_for_backward(input, exponents)
       self.C = C
       self.M = M
       self.d = d
-      self.norm = norm # batch x 1
+      self.norm = norm # batch x sample x 1
       return norm.to(torch.float32)
 
     @staticmethod
@@ -65,31 +66,32 @@ class Normalization(torch.autograd.Function):
       '''
       grad_output: grad of upper layers
       '''
-      input,exponents = self.saved_tensors
-      normToSquarePower = (self.norm**(2*exponents)).to(torch.float64) #batch x length_sign
-      normToSquarePowerMinus1 = (self.norm**(2*exponents-1)).to(torch.float64) #batch x length_sign
-      denominator = torch.sum((input**2)*(normToSquarePowerMinus1),1,keepdim=True) #batch x 1
-      inputnorm = (1+torch.sum(input**2, 1, keepdim=True))**(1/2) # batch x 1 ,norm of the pre-normalized signature
+      input, exponents = self.saved_tensors
+      normToSquarePower = (self.norm**(2*exponents)).to(torch.float64) #batch x samples x length_sign
+      normToSquarePowerMinus1 = (self.norm**(2*exponents-1)).to(torch.float64) # batch x length_sign
+      denominator = torch.sum((input**2)*(normToSquarePowerMinus1), -1, keepdim=True).to(torch.float64) #batch x samples x 1
+      inputnorm = ((1 + torch.sum(input**2, -1, keepdim=True))**(1/2)).to(torch.float64) # batch x samples x 1 , norm of the pre-normalized signature
 
       # computing phi derivative based on the 2 branches of the phi function
-      phiDerivative = torch.zeros(input.shape[0], 1, dtype=torch.float64) #batch x 1
+      phiDerivative = torch.zeros(input.shape[0], input.shape[1], 1, dtype=torch.float64) #batch x samples x 1
       
       # second branch
-      index1 = torch.where(inputnorm[:,0]>(self.C)**(1/2))[0]
+      index1 = torch.where(inputnorm[:, :, 0]> (self.C)**(1/2))[0]
       if len(index1) > 0:
-        phiDerivative[index1,:] = 2*(self.C)**2/(inputnorm[index1,:]**3)
+        phiDerivative[index1, :] = 2*(self.C)**2/(inputnorm[index1,:]**3)
       
       # first branch
-      index2=torch.where(inputnorm[:,0]<=(self.C)**(1/2))[0]
+      index2 = torch.where(inputnorm[:, :, 0]<=(self.C)**(1/2))[0]
+
       if len(index2) > 0:
-        phiDerivative[index2,:] = 2*inputnorm[index2,:]
+        phiDerivative[index2, :] = 2*inputnorm[index2,:]
       
       # Numerator
-      Numerator = normToSquarePower - (phiDerivative/(2*inputnorm))*torch.ones(input.shape[0], int((self.d**(self.M+1)-1)/(self.d-1)-1)) # batch x length_sign
+      Numerator = normToSquarePower - (phiDerivative/(2*inputnorm))*torch.ones(input.shape[0], input.shape[1], int((self.d**(self.M+1)-1)/(self.d-1)-1)) # batch x samples x length_sign
       Numerator = input*Numerator
 
-      gradient = Numerator/denominator # batch x length_sign
-      return grad_output*gradient, None, None, None, None
+      gradient = Numerator/denominator # batch x samples x length_sign
+      return grad_output*gradient, None, None, None, None, None
 
 
 ''' Triangular: transformed a vector into a lower triangular matrix '''
@@ -154,11 +156,12 @@ class PreparationWithTimeAugmentation(torch.nn.Module):
 
 ''' Compute expected signature, using correction term on martingale indices '''
 class ExpectedSignature(torch.nn.Module):
-    def __init__(self, M, d, C = None, martingale_indices = None):
+    def __init__(self, M, d, C = None, a = 1, martingale_indices = None):
         super(ExpectedSignature, self).__init__()
         self.M = M
         self.d = d
         self.C = C
+        self.a = a
         if self.C:
           # build the exponents useful for normalization procedure
           self.exponents = torch.ones(int((d**(M + 1) - 1)/(d - 1) - 1))
@@ -186,15 +189,12 @@ class ExpectedSignature(torch.nn.Module):
             corrections = torch.einsum('...jk,...jl->...kl', signatures_lower, path[..., 1:, :] - path[..., :-1, :]).flatten(start_dim=-2)    # shape: (..., samples, d + ... + d**M)
 
             c_hat = (signatures * corrections).mean(axis=-2) / (corrections**2).mean(axis=-2)                                                 # shape: (..., d + ... + d**M)
-            print(c_hat.unsqueeze(-2).shape)
-            print(corrections.shape)
-            print(corrections[..., self.sig_correction_indices].shape)
             signatures[..., self.sig_correction_indices] -= (c_hat.unsqueeze(-2) * corrections)[..., self.sig_correction_indices]             # shape: (..., samples, d + ... + d**M)
         else:
             pass
         if self.C:
-          norm = Normalization.apply(signatures, self.C, self.M, self.d, self.exponents)
-          signatures = signatures * (norm[:, :, None] ** self.exponents[None, None, :])
+          norm = Normalization.apply(signatures, self.C, self.M, self.d, self.exponents, self.a)
+          signatures = signatures * (norm ** self.exponents[None, None, :])
         return signatures.mean(axis=-2)                                                                                                       # shape: (..., d + ... + d**M)
 
     def get_signature_correction_indices(self):
@@ -211,3 +211,28 @@ class ExpectedSignature(torch.nn.Module):
           return sig_indices
         else:
            return []
+        
+
+# Evaluation function to calculate accuracy
+def evaluate_accuracy(model, data_loader):
+    model.eval()  # Set the model to evaluation mode
+    correct = 0
+    total = 0
+    with torch.no_grad():  # No gradient calculation during evaluation
+        for inputs, labels in data_loader:
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs, 1)  # Get the predicted class
+            correct += (predicted == labels).sum().item()  # Count correct predictions
+            total += labels.size(0)  # Total samples
+    
+    accuracy = correct / total * 100  # Calculate accuracy as a percentage
+    return accuracy
+
+
+def to_tensor(X):
+   if isinstance(X, np.ndarray):
+      return torch.from_numpy(X)
+   elif isinstance(X, torch.Tensor):
+      return X
+
+

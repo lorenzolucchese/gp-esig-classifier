@@ -9,7 +9,7 @@ class MyModel(torch.nn.Module):
     L2: number of new time instants
     order: in Preparationwithtimeaugmentation we concatenate the starting values and the sampled one, order reorganize them (FOR EXAMPLE L1=100, L2=99, THEN ORDER=[0,100,1,101,2,102,..] IF THE NEW TIME INSTANTS ARE THE MIDDLE POINTS)
     extended_order: as order but takes into account the dimension of the time series (FOR EXAMPLE D=2, L1=100,L2=99 SO STARTING TIME SERIES HAS 200 VALUES AND NEW VALUES ARE 198, SO EXTENDED ORDER=[0,1,200,201,2,3,202,203,...])
-    ALP: how many subdiagonals of the lower triangular matrix are non zero, alpha=L2 means no zero in the lower part
+    alpha: how many subdiagonals of the lower triangular matrix are non zero, alpha='full' 'means no zero in the lower part
     level: signature truncation level
     number_classes: number of labels in the classification problem
     C, a: phi function parameters
@@ -17,6 +17,10 @@ class MyModel(torch.nn.Module):
     dim: dimension of the starting time series
     '''
     super(MyModel, self).__init__()
+
+    # set alpha to numerical value    
+    alpha = L2 if alpha == 'full' else alpha
+
     self.K = K
     self.C = C
     self.a = a
@@ -56,7 +60,7 @@ class MyModel(torch.nn.Module):
     self.FinalLayer = torch.nn.Linear(self.outputSigDim, self.number_classes)
     self.GaussianSampler = torch.distributions.Normal(0, 1)
     self.InterleaveWithTimeAugmentation = PreparationWithTimeAugmentation(self.order, self.L1 + self.L2, self.dim, self.extended_order)
-    self.ExpectedSignatureLayer = ExpectedSignature(self.level, self.dim + 1, C=self.C, martingale_indices=martingale_indices)
+    self.ExpectedSignatureLayer = ExpectedSignature(self.level, self.dim + 1, C=self.C, a=self.a, martingale_indices=martingale_indices)
     self.LogSoftmax = torch.nn.LogSoftmax(1)
 
   def forward(self, x):
