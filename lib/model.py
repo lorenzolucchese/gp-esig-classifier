@@ -31,13 +31,16 @@ class MyModel(torch.nn.Module):
     self.order = order
     self.extended_order = extended_order
 
+    if not isinstance(martingale_indices, list) or not all(isinstance(i, int) for i in martingale_indices) or not all(0 <= i < dim for i in martingale_indices):
+      raise ValueError(f'martingale_indices={martingale_indices} must be a list of integers between 0 and dim={dim}.')
+
     # compute how much elements in the lower triangular matrix
     MatrixEl = int((int(L2*(L2+1)/2) - int((L2-alpha)*(L2-alpha+1)/2)) * (int(dim*(dim+1)/2)))
     self.level = level
     self.number_classes = number_classes
 
     # number of components of the signature (remember we have time augmentation)
-    self.outputSigDim = int(((dim+1)**(level+1)-1)/(dim)-1)
+    outputSigDim = int(((dim+1)**(level+1)-1)/(dim)-1)
 
     #needed to reshape first layer output into a matrix (in triangular function)
     tril_indices = torch.tril_indices(row=(dim), col=(dim), offset=0)
@@ -57,17 +60,17 @@ class MyModel(torch.nn.Module):
 
     self.MeanLayer = torch.nn.Linear((L1*(dim+1)+L2), (L2*dim)) # (L1 + L2 + L1*d, L2*d)
     self.SqrtCovLayer = torch.nn.Linear((L1*(dim+1)+L2), MatrixEl)
-    self.FinalLayer = torch.nn.Linear(self.outputSigDim, self.number_classes)
+    self.FinalLayer = torch.nn.Linear(outputSigDim, number_classes)
     self.GaussianSampler = torch.distributions.Normal(0, 1)
-    self.InterleaveWithTimeAugmentation = PreparationWithTimeAugmentation(self.order, self.L1 + self.L2, self.dim, self.extended_order)
-    self.ExpectedSignatureLayer = ExpectedSignature(self.level, self.dim + 1, C=self.C, a=self.a, martingale_indices=martingale_indices)
+    self.InterleaveWithTimeAugmentation = PreparationWithTimeAugmentation(order, L1 + L2, dim, extended_order)
+    self.ExpectedSignatureLayer = ExpectedSignature(level, dim + 1, C=C, a=a, martingale_indices=martingale_indices)
     self.LogSoftmax = torch.nn.LogSoftmax(1)
 
   def forward(self, x):
     mean = self.MeanLayer(x)
     sqrtCov = self.SqrtCovLayer(x)
     sqrtCovMatrix = Triangular(self.dim, self.L2, self.x_indicesFull, self.y_indicesFull)(sqrtCov)
-    epsilon = self.GaussianSampler.sample(torch.Size([x.shape[0], self.L2 * self.dim, self.K]))
+    epsilon = self.GaussianSampler.sample(torch.Size([x.shape[0], self.L2 * self.dim, self.K])).to(x.device)
     newValues = torch.bmm(sqrtCovMatrix, epsilon) + mean.unsqueeze(2)
     path = self.InterleaveWithTimeAugmentation(x, newValues).permute(0, 3, 1, 2)    
     self.MeanSig = self.ExpectedSignatureLayer(path)

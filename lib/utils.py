@@ -22,7 +22,7 @@ def dilatation(x, C, a, M, d):
   M : truncation level (called L in the paper)
   d : dimension of the time series we are computing the signature of (!! if time augmentation is deployed, then the dimension is increased by 1)
   '''
-  xNumpy = x.detach().numpy().astype(np.float64) 
+  xNumpy = x.detach().cpu().numpy().astype(np.float64) 
 
   coefficients = np.zeros((xNumpy.shape[0], xNumpy.shape[1], (M+1)))
   normalizz = np.zeros((xNumpy.shape[0], xNumpy.shape[1], 1))
@@ -53,7 +53,7 @@ class Normalization(torch.autograd.Function):
       C, M, d: as in the previous function
       exponents: a vector as long as the signature, it has d times 1, d^2 times 2,..., d^M times the value M
       '''
-      norm = dilatation(input, C, a, M, d)
+      norm = dilatation(input, C, a, M, d).to(input.device)
       self.save_for_backward(input, exponents)
       self.C = C
       self.M = M
@@ -73,7 +73,7 @@ class Normalization(torch.autograd.Function):
       inputnorm = ((1 + torch.sum(input**2, -1, keepdim=True))**(1/2)).to(torch.float64) # batch x samples x 1 , norm of the pre-normalized signature
 
       # computing phi derivative based on the 2 branches of the phi function
-      phiDerivative = torch.zeros(input.shape[0], input.shape[1], 1, dtype=torch.float64) #batch x samples x 1
+      phiDerivative = torch.zeros(input.shape[0], input.shape[1], 1, dtype=torch.float64).to(input.device) #batch x samples x 1
       
       # second branch
       index1 = torch.where(inputnorm[:, :, 0]> (self.C)**(1/2))[0]
@@ -87,7 +87,7 @@ class Normalization(torch.autograd.Function):
         phiDerivative[index2, :] = 2*inputnorm[index2,:]
       
       # Numerator
-      Numerator = normToSquarePower - (phiDerivative/(2*inputnorm))*torch.ones(input.shape[0], input.shape[1], int((self.d**(self.M+1)-1)/(self.d-1)-1)) # batch x samples x length_sign
+      Numerator = normToSquarePower - (phiDerivative/(2*inputnorm))*torch.ones(input.shape[0], input.shape[1], int((self.d**(self.M+1)-1)/(self.d-1)-1)).to(input.device) # batch x samples x length_sign
       Numerator = input*Numerator
 
       gradient = Numerator/denominator # batch x samples x length_sign
@@ -109,9 +109,9 @@ class Triangular(torch.nn.Module):
     self.y_indices = y_indices
 
 
-  def forward(self,x): # x is of size batch x int((int(L2*(L2+1)/2)-int((L2-alp)*(L2-alp+1)/2))*(int(dim*(dim+1)/2)))
-    A = torch.zeros((x.shape[0], self.L2*self.dim, self.L2*self.dim))
-    A[:,torch.Tensor.long(self.x_indices), torch.Tensor.long(self.y_indices)] = x
+  def forward(self, x): # x is of size batch x int((int(L2*(L2+1)/2)-int((L2-alp)*(L2-alp+1)/2))*(int(dim*(dim+1)/2)))
+    A = torch.zeros((x.shape[0], self.L2*self.dim, self.L2*self.dim)).to(x.device)
+    A[:, torch.Tensor.long(self.x_indices), torch.Tensor.long(self.y_indices)] = x
     return A
 
 
@@ -164,31 +164,32 @@ class ExpectedSignature(torch.nn.Module):
         self.a = a
         if self.C:
           # build the exponents useful for normalization procedure
-          self.exponents = torch.ones(int((d**(M + 1) - 1)/(d - 1) - 1))
+          exponents = torch.ones(int((d**(M + 1) - 1)/(d - 1) - 1))
           seen = d
           for j in range(2, M + 1):
-              self.exponents[seen:seen + d**j] = torch.ones(d**j) * j
+              exponents[seen:seen + d**j] = torch.ones(d**j) * j
               seen += d**j
+          self.register_buffer('exponents', exponents)
         self.martingale_indices = martingale_indices
         self.sig_correction_indices = self.get_signature_correction_indices()
 
     def forward(self, path):    
         length = path.shape[-2]                                                                                                               # shape: (..., samples, length, d)
         signatures_stream = signatory.signature(path.reshape(-1, length, self.d), self.M, stream=True)                                        # shape: (..., samples, length - 1, d + ... + d**M)
-        signatures_stream = signatures_stream.reshape((*path.shape[:-2], *signatures_stream.shape[-2:]))                                      # shape: (..., samples, length - 1, d + ... + d**M)
+        signatures_stream = signatures_stream.clone().reshape((*path.shape[:-2], *signatures_stream.shape[-2:]))                                      # shape: (..., samples, length - 1, d + ... + d**M)
         # pre-compute signature indices for efficiency
         signatures = signatures_stream[..., -1, :]                                                                                            # shape: (..., samples, d + ... + d**M)
         if self.martingale_indices:
             signatures_lower = signatures_stream[..., :-1, :-self.d**self.M]                                                                  # shape: (..., samples, length - 2, d + ... + d**(M-1))
             # pre-pend signature starting values at zero
-            signatures_start = torch.cat([torch.zeros(*path.shape[:-2], 1, self.d**i) for i in range(1, self.M)], dim=-1)                     # shape: (..., samples, 1, d + ... + d**(M-1))	
+            signatures_start = torch.cat([torch.zeros(*path.shape[:-2], 1, self.d**i).to(path.device) for i in range(1, self.M)], dim=-1)     # shape: (..., samples, 1, d + ... + d**(M-1))	
             signatures_lower = torch.cat([signatures_start, signatures_lower], dim=-2)                                                        # shape: (..., samples, length - 1, d + ... + d**(M-1))        
             
             # append 0-th order signature
-            signatures_lower = torch.cat([torch.ones(*path.shape[:-2], length - 1, 1), signatures_lower], dim=-1)                             # shape: (..., samples, length - 1, 1 + d + ... + d**(M-1))
+            signatures_lower = torch.cat([torch.ones(*path.shape[:-2], length - 1, 1).to(path.device), signatures_lower], dim=-1)             # shape: (..., samples, length - 1, 1 + d + ... + d**(M-1))
             corrections = torch.einsum('...jk,...jl->...kl', signatures_lower, path[..., 1:, :] - path[..., :-1, :]).flatten(start_dim=-2)    # shape: (..., samples, d + ... + d**M)
 
-            c_hat = (signatures * corrections).mean(axis=-2) / (corrections**2).mean(axis=-2)                                                 # shape: (..., d + ... + d**M)
+            c_hat = (signatures.clone() * corrections).mean(axis=-2) / (corrections**2).mean(axis=-2)                                         # shape: (..., d + ... + d**M)
             signatures[..., self.sig_correction_indices] -= (c_hat.unsqueeze(-2) * corrections)[..., self.sig_correction_indices]             # shape: (..., samples, d + ... + d**M)
         else:
             pass
@@ -200,11 +201,11 @@ class ExpectedSignature(torch.nn.Module):
     def get_signature_correction_indices(self):
         if self.martingale_indices:
           if not isinstance(self.martingale_indices, list) or not all(isinstance(i, int) for i in self.martingale_indices) or not all(0 <= i < self.d for i in self.martingale_indices):
-              raise ValueError(f'The ending_indices argument must be a list of integers between 0 and self.d={self.d}.')
+              raise ValueError(f'self.martingale_indices argument must be a list of integers between 0 and self.d={self.d}.')
           sig_indices = []
           start_index = 0
           for i in range(1, self.M + 1):
-              # in each signature level, of size d**i, we want to extract j*d**(i-1):(j+1)*d**(i-1) for j in ending_indices
+              # in each signature level, of size d**i, we want to extract j*d**(i-1):(j+1)*d**(i-1) for j in self.martingale_indices
               for j in self.martingale_indices:
                   sig_indices.extend(list(range(start_index+j*self.d**(i-1), start_index+(j+1)*self.d**(i-1))))
               start_index += self.d**i

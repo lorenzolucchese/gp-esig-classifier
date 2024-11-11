@@ -52,6 +52,7 @@ def train(args):
     C = model_hyperparameters.get('C', 1e3)
     a = model_hyperparameters.get('a', 1)
     K = model_hyperparameters.get('K', 10)
+    martingale_indices = args.martingale_indices
 
     known_times, new_times, order, extended_order = get_order(L1=L1, dim=dim, division=division, begin=begin, end=end)
     L2 = len(new_times)
@@ -84,7 +85,8 @@ def train(args):
             'level': level, 
             'C': C, 
             'a': a, 
-            'K': K
+            'K': K,
+            'martingale_indices': martingale_indices
         }, 
         'fit': {
             'batch_size': batch_size,
@@ -111,7 +113,8 @@ def train(args):
         number_classes=number_classes, 
         C=C, 
         a=a, 
-        K=K
+        K=K,
+        martingale_indices=martingale_indices
     ).to(device)
 
     # add timestamps to time series as required by model architecture
@@ -127,6 +130,8 @@ def train(args):
     # Initialize loss function, and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
+
+    torch.autograd.set_detect_anomaly(True)
 
     # Training parameters
     # patience = 10
@@ -168,14 +173,16 @@ def train(args):
             optimizer.step()  # Optimize weights
             
             running_loss += loss.item()  # Accumulate loss
-
-            print(loss.item())
         
-        # Average loss for the training epoch
-        train_loss = running_loss / len(train_loader)
-        print(f'Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}')
+        # Average loss and accuracy for the training epoch
+        train_loss = running_loss / len(train_loader)        
+        train_accuracy = evaluate_accuracy(model, train_loader)
+        print(f'Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%.')
 
-        history.append({'Train Loss': train_loss})
+        history.append({'Train Loss': train_loss, 'Train Accuracy': train_accuracy})
+
+        with open(history_path, 'wb') as f:
+            pickle.dump(history, f)
 
         # # Validation step
         # model.eval()  # Set the model to evaluation mode
@@ -242,13 +249,13 @@ def train(args):
         print(f'{dataset_type} Loss: {loss:.4f}')
 
         # Calculate and print accuracy on validation set
-        accuracy = evaluate_accuracy(model, test_loader)
+        accuracy = evaluate_accuracy(model, loader)
         print(f'{dataset_type} Accuracy: {accuracy:.2f}%')
 
         metrics[f'{dataset_type} Loss'] = loss
         metrics[f'{dataset_type} Accuracy'] = accuracy
 
-    with open(os.path.join(training_dir, 'metrics.pkl'), 'w') as f:
+    with open(os.path.join(training_dir, 'eval_metrics.pkl'), 'wb') as f:
         pickle.dump(metrics, f)
 
 
@@ -262,11 +269,11 @@ if __name__ == "__main__":
     parser.add_argument('-data_dir', default='./datasets', type=str)
     parser.add_argument('-hyperparameters_config', default='./hyperparameters.yaml', type=str)
     parser.add_argument('-use_cuda', action='store_true')
-    parser.add_argument('-device', default=1, type=int)
+    parser.add_argument('-device', default=0, type=int)
     parser.add_argument('-seed', default=0, type=int)
     parser.add_argument('-run', default=None)
     parser.add_argument('-dataset', default='MBvsFMB', type=str)
-    parser.add_argument('-martingale_indices', default=[None, [0]], nargs="+")
+    parser.add_argument('-martingale_indices', default=None, nargs='+', type=int)
 
     args = parser.parse_args()
     train(args)
