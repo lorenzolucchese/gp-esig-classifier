@@ -237,7 +237,7 @@ def train(args):
     model.eval()  # Set the model to evaluation mode
 
     metrics = {}
-    for dataset_type, loader in zip(["Train", "Test"], [train_loader, test_loader]):
+    for dataset_type, loader in zip(["Train", "Val", "Test"], [train_loader, val_loader, test_loader]):
         running_loss = 0.0
         with torch.no_grad():  # No gradient calculation for testing
             for inputs, labels in loader:
