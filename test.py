@@ -17,7 +17,16 @@ from torch.utils.data import DataLoader, TensorDataset
 def test(args):
     device = 'cuda:{}'.format(args.device) if args.use_cuda and torch.cuda.is_available() else 'cpu'
 
-    configs = yaml.safe_load(open(os.path.join(args.base_dir, args.configs), 'rb'))
+    if args.configs is not None:
+        configs_rel_path = args.configs 
+    else:
+        datasets = ['MBvsFMB', 'OU1vsOU2', 'Bidim']
+        models = ['esig', 'm-esig']
+        seeds = [0, 1, 2, 3, 4, 5]
+        all_configs = [os.path.join(d, m, f"run_{s}", "configs.yaml") for d in datasets for m in models for s in seeds]
+        configs_rel_path = all_configs[args.configs_idx]
+    print(configs_rel_path)
+    configs = yaml.safe_load(open(os.path.join(args.base_dir, configs_rel_path), 'rb'))
 
     # dataset
     data_configs = configs.get('data', {})
@@ -127,8 +136,9 @@ if __name__ == "__main__":
     parser.add_argument('-data_dir', default='./datasets', type=str)
     parser.add_argument('-use_cuda', action='store_true')
     parser.add_argument('-device', default=0, type=int)
-    parser.add_argument('-configs', type=str)
     parser.add_argument('-test_seeds', default=10, type=int)
+    parser.add_argument('-configs', default=None, type=str)
+    parser.add_argument('-configs_idx', default=0, type=int)
 
     args = parser.parse_args()
     test(args)
