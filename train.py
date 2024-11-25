@@ -2,7 +2,7 @@ import numpy as np
 import os
 import yaml
 from lib.data.utils import get_order, add_timestamps
-from lib.model import MyModel
+from lib.model import GPES
 from lib.utils import evaluate_accuracy, to_tensor
 import pickle
 
@@ -107,7 +107,7 @@ def train(args):
     torch.manual_seed(args.seed)
 
     # Initialize model, loss function, and optimizer
-    model = MyModel(
+    model = GPES(
         L1=L1, 
         L2=L2, 
         dim=dim, 

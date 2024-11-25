@@ -2,7 +2,7 @@ import torch
 from lib.utils import Triangular, PreparationWithTimeAugmentation, ExpectedSignature
 
 
-class MyModel(torch.nn.Module):
+class GPES(torch.nn.Module):
   def __init__(self, L1, L2, dim, order, extended_order, alpha, level, number_classes, C, a, K, martingale_indices = None):
     '''
     L1: number of known time instants, i.e. length of the time series
@@ -16,7 +16,7 @@ class MyModel(torch.nn.Module):
     K: numbers of augmented paths generated
     dim: dimension of the starting time series
     '''
-    super(MyModel, self).__init__()
+    super(GPES, self).__init__()
 
     # set alpha to numerical value    
     alpha = L2 if alpha == 'full' else alpha
