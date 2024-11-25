@@ -32,7 +32,7 @@ def train(args):
         hyperparameters = yaml.safe_load(f)[dataset]
 
     # data hyperparameters
-    data_hyperparameters = hyperparameters.get('model', {})
+    data_hyperparameters = hyperparameters.get('data', {})
     L1 = data_hyperparameters.get('L1', 100)
     dim = data_hyperparameters.get('dim', 1)
     number_classes = data_hyperparameters.get('number_classes', 2)
@@ -62,12 +62,14 @@ def train(args):
     batch_size = int(fit_hyperparameters.get('batch_frac', 0.25) * train_samples)
     lr = fit_hyperparameters.get('lr', 1e-2)
     epochs = fit_hyperparameters.get('epochs', 100)
+    train_val_split = fit_hyperparameters.get('train_val_split', 0.75)
+    seed = args.seed
+    patience = fit_hyperparameters.get('patience', epochs)
     
     # training dir
-    parent_training_dir = os.path.join(args.base_dir, dataset)
+    parent_training_dir = os.path.join(args.base_dir, dataset, 'm-esig' if martingale_indices else 'esig')
     os.makedirs(parent_training_dir, exist_ok=True)
-    run = args.run if args.run else len(os.listdir(parent_training_dir))
-    training_dir = os.path.join(args.base_dir, dataset, f'run_{run}')
+    training_dir = os.path.join(parent_training_dir, f'run_{seed}')
     os.makedirs(training_dir, exist_ok=True)
 
     configs = {
@@ -91,7 +93,10 @@ def train(args):
         'fit': {
             'batch_size': batch_size,
             'lr': lr,
-            'epochs': epochs
+            'epochs': epochs,
+            'train_val_split': train_val_split,
+            'seed': seed,
+            'patience': patience
         }
     }
 
@@ -117,24 +122,30 @@ def train(args):
         martingale_indices=martingale_indices
     ).to(device)
 
+    # split train set into train val
+    np.random.seed(0) # fix train val split across different training runs
+    indices = np.random.permutation(train_samples)
+    split = int(train_val_split * train_samples)
+    train_X, val_X = train_X[indices[:split]], train_X[indices[split:]]
+    train_y, val_y = train_y[indices[:split]], train_y[indices[split:]]
+
     # add timestamps to time series as required by model architecture
     train_X = add_timestamps(train_X, known_times=known_times, new_times=new_times)
+    val_X = add_timestamps(val_X, known_times=known_times, new_times=new_times)
     test_X = add_timestamps(test_X, known_times=known_times, new_times=new_times)
 
     training_data = TensorDataset(to_tensor(train_X).to(device), to_tensor(train_y).long().to(device))
     train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
 
+    val_data = TensorDataset(to_tensor(val_X).to(device), to_tensor(val_y).long().to(device))
+    val_loader = DataLoader(val_data, batch_size=len(val_data), shuffle=True)
+
     test_data = TensorDataset(to_tensor(test_X).to(device), to_tensor(test_y).long().to(device))
-    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_data, batch_size=len(test_data), shuffle=False)
 
     # Initialize loss function, and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
-
-    torch.autograd.set_detect_anomaly(True)
-
-    # Training parameters
-    # patience = 10
 
     # Define the path to save the checkpoint
     checkpoint_path = os.path.join(training_dir, 'checkpoint.pth')
@@ -148,14 +159,14 @@ def train(args):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch']
         best_loss = checkpoint['best_loss']
-        # early_stopping_counter = checkpoint['early_stopping_counter']
-        with open(history_path, 'r') as f:
-            history = pickle.load(history_path)
+        early_stopping_counter = checkpoint.get('early_stopping_counter', 0)
+        with open(history_path, 'rb') as f:
+            history = pickle.load(f)
         assert len(history) == start_epoch
     else:
         start_epoch = 0  # Start from the beginning if no checkpoint exists
         best_loss = float('inf')
-        # early_stopping_counter = 0
+        early_stopping_counter = 0
         history = []
 
     # Training loop
@@ -165,8 +176,6 @@ def train(args):
         
         for inputs, labels in tqdm(train_loader):
             optimizer.zero_grad()  # Zero the parameter gradients
-            # set seed
-            torch.manual_seed(epoch) # set like this to keep some randomness
             outputs = model(inputs)  # Forward pass
             loss = criterion(outputs, labels)  # Compute loss
             loss.backward()  # Backward pass
@@ -177,46 +186,39 @@ def train(args):
         # Average loss and accuracy for the training epoch
         train_loss = running_loss / len(train_loader)        
         train_accuracy = evaluate_accuracy(model, train_loader)
-        print(f'Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%.')
+        print(f'Epoch {epoch+1}/{epochs}')
+        print(f'Training Loss: {train_loss:.4f}, Training Accuracy: {train_accuracy:.2f}%.')
 
-        history.append({'Train Loss': train_loss, 'Train Accuracy': train_accuracy})
+        # Validation step
+        model.eval()  # Set the model to evaluation mode
+        val_running_loss = 0.0
+        with torch.no_grad():  # No gradient calculation for validation
+            for inputs, labels in val_loader:
+                outputs = model(inputs)  # Forward pass
+                loss = criterion(outputs, labels)  # Compute validation loss
+                val_running_loss += loss.item()  # Accumulate validation loss
+
+        # Average loss and accuracy for the validation epoch
+        val_loss = val_running_loss / len(val_loader)
+        val_accuracy = evaluate_accuracy(model, val_loader)
+        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+
+        history.append({'Training Loss': train_loss, 'Training Accuracy': train_accuracy, 'Validation Loss': val_loss, 'Validation Accuracy': val_accuracy})
 
         with open(history_path, 'wb') as f:
             pickle.dump(history, f)
-
-        # # Validation step
-        # model.eval()  # Set the model to evaluation mode
-        # val_running_loss = 0.0
-        # with torch.no_grad():  # No gradient calculation for validation
-        #     for inputs, labels in val_loader:
-        #         outputs = model(inputs)  # Forward pass
-        #         loss = criterion(outputs, labels)  # Compute validation loss
-        #         val_running_loss += loss.item()  # Accumulate validation loss
-
-        # # Average loss for the validation epoch
-        # val_loss = val_running_loss / len(val_loader)
-        # print(f'Validation Loss: {val_loss:.4f}')
-
-        # # Calculate and print accuracy on validation set
-        # accuracy = evaluate_accuracy(model, val_loader)
-        # print(f'Validation Accuracy: {accuracy:.2f}%')
         
-        # # Early stopping
-        # if val_loss < best_loss:
-        #     best_loss = val_loss
-        #     early_stopping_counter = 0  # Reset counter if loss improves
-        #     print("Improved! Saving model...")
-        #     torch.save(model.state_dict(), os.path.join(training_dir, 'best_model.pth'))  # Save the best model
-        # else:
-        #     early_stopping_counter += 1
-        #     if early_stopping_counter >= patience:
-        #         print("Early stopping triggered.")
-        #         break  # Stop training if patience is exceeded
-
-        if train_loss < best_loss:
-            best_loss = train_loss
+        # Early stopping
+        if val_loss < best_loss:
+            best_loss = val_loss
+            early_stopping_counter = 0  # Reset counter if loss improves
             print("Improved! Saving model...")
-            torch.save(model.state_dict(), os.path.join(training_dir, 'best_model.pth'))
+            torch.save(model.state_dict(), os.path.join(training_dir, 'best_model.pth'))  # Save the best model
+        else:
+            early_stopping_counter += 1
+            if early_stopping_counter >= patience:
+                print("Early stopping triggered.")
+                break  # Stop training if patience is exceeded
 
         # Save checkpoint after each epoch
         torch.save({
@@ -224,7 +226,7 @@ def train(args):
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'best_loss': best_loss,
-            # 'early_stopping_counter': early_stopping_counter,
+            'early_stopping_counter': early_stopping_counter,
         }, checkpoint_path)
 
     print("Training completed.")

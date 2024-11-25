@@ -26,13 +26,18 @@ def get_order(L1, dim = 1, division = 1, begin = 0, end = 1):
 
 def add_timestamps(X, known_times, new_times):
     '''
-    X: time series as features
+    X: time series of shape n_samples x L1 x dim
+    dataset: n_samples x (L1 + L2 + d*L1)
     '''
     # adding known and unknown time stamps
     timestamps = np.concatenate((known_times, new_times))
     time_data = np.stack([timestamps]*len(X), axis=0)
 
     # full dataset train
+    if X.ndim == 2:
+        pass
+    elif X.ndim == 3:
+        X = X.reshape(len(X), -1)
     dataset = np.concatenate((time_data, X), axis=-1) # full dataset
     dataset = dataset.astype('float32')
 

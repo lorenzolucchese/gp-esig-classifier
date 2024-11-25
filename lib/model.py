@@ -31,7 +31,7 @@ class MyModel(torch.nn.Module):
     self.order = order
     self.extended_order = extended_order
 
-    if not isinstance(martingale_indices, list) or not all(isinstance(i, int) for i in martingale_indices) or not all(0 <= i < dim for i in martingale_indices):
+    if martingale_indices is not None and (not isinstance(martingale_indices, list) or not all(isinstance(i, int) for i in martingale_indices) or not all(0 <= i < dim for i in martingale_indices)):
       raise ValueError(f'martingale_indices={martingale_indices} must be a list of integers between 0 and dim={dim}.')
 
     # compute how much elements in the lower triangular matrix
