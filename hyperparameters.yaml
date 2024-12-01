@@ -1,0 +1,54 @@
+MBvsFMB:
+  data:
+    dim: 1
+    L1: 100
+    number_classes: 2
+    begin: 0.
+    end: 1.
+  model:
+    division: 1 
+    alpha: full
+    level: 4
+    C: 800.
+    a: 1.
+    K: 30
+  fit:
+    batch_frac: 0.25
+    lr: 0.08
+    epochs: 1500
+OU1vsOU2:
+  data:
+    dim: 1
+    L1: 100
+    number_classes: 2
+    begin: 0.
+    end: 1.
+  model:
+    division: 1 
+    alpha: full
+    level: 4
+    C: 300.
+    a: 1.
+    K: 60
+  fit:
+    batch_frac: 0.25
+    lr: 0.08
+    epochs: 500
+Bidim:
+  data:
+    dim: 2
+    L1: 100
+    number_classes: 6
+    begin: 0.
+    end: 1.
+  model:
+    division: 1 
+    alpha: full
+    level: 4
+    C: 1000.
+    a: 1.
+    K: 40
+  fit:
+    batch_frac: 0.25
+    lr: 0.06
+    epochs: 1000

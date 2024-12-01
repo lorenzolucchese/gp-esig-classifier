@@ -1,0 +1,5 @@
+*.pyc
+*.pth
+numerical_results/
+datasets/
+*.pbs*

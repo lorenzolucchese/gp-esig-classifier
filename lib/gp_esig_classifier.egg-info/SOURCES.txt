@@ -1,0 +1,7 @@
+setup.py
+data/__init__.py
+data/synthetic.py
+gp_esig_classifier.egg-info/PKG-INFO
+gp_esig_classifier.egg-info/SOURCES.txt
+gp_esig_classifier.egg-info/dependency_links.txt
+gp_esig_classifier.egg-info/top_level.txt

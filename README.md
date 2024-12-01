@@ -1,5 +1,3 @@
-# A-new-signature-model
+# Gaussian Process-augmented Expected Signature Classifier
 
-This project will offer the code for building a new time series classification model.
-
-This model is based on the properties of the expected signature and Gaussian processes.
+This repo offers an implementation of the model described in the paper [Gaussian Processes Based Data Augmentation and Expected Signature for Time Series Classification](https://ieeexplore.ieee.org/document/10546274).
